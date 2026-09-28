@@ -1,0 +1,196 @@
+import networkx as nx
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+from scipy import ndimage
+from matplotlib.ticker import LinearLocator
+
+# 定义WS网络参数
+N = 1000  # 节点数量
+K = 4  # 平均度
+p = 0.5  # 重连概率
+
+# 初始化WS网络
+ws_graph = nx.watts_strogatz_graph(N, K, p)
+
+# 模拟传播过程
+total_time_steps = 1000
+intera = 1
+beta0_range = np.linspace(0, 1, num = 12)  # beta0范围
+beta0_range = np.round(beta0_range, decimals= 3)
+print(beta0_range)
+delta_range = np.linspace(0, 1, num = 11)  # delta范围
+delta_range = np.round(delta_range, decimals=3)
+
+heatmap_data = np.zeros((len(delta_range), len(beta0_range)))  # 用于存储感染人数比例的二维数组
+for beta0_index, beta0 in enumerate(beta0_range):
+    print(beta0)
+    print(str(beta0_index/33*100) + '%')
+    for delta_index, delta in enumerate(delta_range):
+        print(delta)
+        TT = []  # 针对每个beta值，收集五次迭代后的数组
+        for _ in range(intera):
+            # 其他代码省略...
+            node_state = {}
+            # 0: S; 1: I; 2: R.
+            for node in ws_graph.nodes:
+                node_state[node] = 0
+            node_state[random.choice(list(ws_graph.nodes))] = 1
+
+            gamma = 0.4  # I->R
+            alpha = 0.5  # R->S
+
+            susceptible_count_t = []
+            infected_count_t = []
+            recovered_count_t = []
+            susceptible_count = sum(value == 0 for value in node_state.values())
+            infected_count = sum(value == 1 for value in node_state.values())
+            recovered_count = sum(value == 2 for value in node_state.values())
+            # 计算初始态sir个数
+            susceptible_count_t.append(susceptible_count)
+            infected_count_t.append(infected_count)
+            recovered_count_t.append(recovered_count)
+
+            for t in range(total_time_steps):
+                # 其他代码省略...
+                for node in ws_graph.nodes:
+                    if node_state[node] == 0:
+                        # 动态感染率
+                        sigma = 0.05  # 扩散率
+                        miu = 0.01  # 漂移率
+                        # 布朗运动模拟
+                        dt = 1  # 时间步长
+                        # 绘制传染率随时间变化的图像
+                        dB = np.sqrt(dt) * np.random.normal(size=total_time_steps)  # 取size=total_time_steps个数，Brownian motion increment,按正态概率正负无穷取值
+                        B = np.cumsum(dB)  # Brownian motion path，累加过后的数组
+                        beta = (beta0 * np.exp((miu - 0.5 * sigma ** 2) * t + sigma * B)) /(1+beta0 * np.exp((miu - 0.5 * sigma ** 2) * t + sigma * B)) # beta是一个数组，为B是一个数组，SIR模型中的传染率β的随机漂移，
+                        # 自我隔离强度
+                        neis = list(ws_graph.neighbors(node))
+                        total_xy_ratio = 1
+                        for neighbor1 in neis:  # 遍历一代邻居
+                            if node_state[neighbor1] == 1:
+                                neigh_num = 0
+                                infected_neis_count = 0
+                                for neighbor2 in ws_graph.neighbors(neighbor1):  # 遍历一代邻居的邻居
+                                    neigh_num += 1
+                                    if node_state[neighbor2] == 1:
+                                        infected_neis_count += 1
+                                xy_ratio = 1 - (delta * np.exp(- infected_neis_count / neigh_num) * beta[t])
+                                total_xy_ratio *= xy_ratio  # 将每个感染邻居对应的 不感染率（1-cβ）值相乘
+                            else:
+                                continue
+                        probai = 1 - total_xy_ratio # 感染率
+
+                        if 0 < random.uniform(0, 1) < probai:
+                            node_state[node] = 1
+
+                    elif node_state[node] == 1:
+                        if 0 < random.uniform(0, 1) < gamma:
+                            node_state[node] = 2
+
+                    elif node_state[node] == 2:
+                        if 0 < random.uniform(0, 1) < alpha:
+                            node_state[node] = 0
+
+                # print(f"计算{t}时刻sir态个体数目并保存在数组中")
+                susceptible_count = sum(value == 0 for value in node_state.values())
+                infected_count = sum(value == 1 for value in node_state.values())
+                recovered_count = sum(value == 2 for value in node_state.values())
+
+                susceptible_count_t.append(susceptible_count)
+                infected_count_t.append(infected_count)
+                recovered_count_t.append(recovered_count)
+
+                f_infected_count_t = [value / N for value in infected_count_t]
+                f_susceptible_count_t = [value / N for value in susceptible_count_t]
+                f_recovered_count_t = [value / N for value in recovered_count_t]
+
+            TT.append(f_infected_count_t)
+
+        result_array = [sum(elements) / intera for elements in zip(*TT)]  # 将重复试验得到的数组的元素取均值，得到新数组
+        heatmap_data[delta_index, beta0_index] = result_array[-1]  # 存储感染人数比例，-1表示最后一个时间步的数据
+
+
+#高斯平滑
+smoothed_heatmap_data = ndimage.gaussian_filter(heatmap_data, sigma=10)
+#plt.subplot(1, 2, 1)
+#plt.plot()
+plt.imshow(smoothed_heatmap_data, cmap='jet', aspect='auto', origin='lower')
+#plt.title('Smoothed Heatmap')
+plt.xlabel('β0')
+plt.ylabel('δ')
+plt.colorbar()
+
+# 自定义x轴刻度位置
+x_tick_positions = [0, 0.2, 0.4, 0.6, 0.8, 1]
+# 创建一个LinearLocator，以确保x轴刻度均匀分布
+x_locator = LinearLocator(numticks=len(x_tick_positions))
+plt.gca().xaxis.set_major_locator(x_locator)
+# 设置x轴刻度标签
+plt.gca().set_xticklabels([str(tick) for tick in x_tick_positions])
+
+#自定义y轴刻度位置
+y_tick_positions = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
+# 创建一个LinearLocator，以确保y轴刻度均匀分布
+y_locator = LinearLocator(numticks=len(y_tick_positions))
+plt.gca().yaxis.set_major_locator(y_locator)
+# 设置y轴刻度标签
+plt.gca().set_yticklabels([str(tick) for tick in y_tick_positions])
+
+'''
+# 设置x轴和y轴刻度 为beta0数组对应刻度
+k1=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
+k2=[0, 0.2, 0.4, 0.6, 0.8, 1]
+# 设置x轴和y轴刻度 为beta0数组对应刻度
+plt.yticks(np.arange(11), k1)
+plt.xticks(np.arange(6), k2)
+'''
+plt.savefig('β&δ高斯热力图2.pdf', format='pdf')
+plt.pause(1)  # 在这里等待1秒钟
+
+plt.show()
+
+
+# 绘制原始热力图
+#plt.subplot(1, 2, 2)
+plt.imshow(heatmap_data, cmap='jet', aspect='auto', origin='lower')
+plt.title('Original Heatmap')
+# 添加颜色条
+plt.colorbar()
+# 添加坐标轴标签
+plt.xlabel('β0')
+#plt.ylabel('delta')
+
+# 自定义x轴刻度位置
+x_tick_positions = [0, 0.2, 0.4, 0.6, 0.8, 1]
+# 创建一个LinearLocator，以确保x轴刻度均匀分布
+x_locator = LinearLocator(numticks=len(x_tick_positions))
+plt.gca().xaxis.set_major_locator(x_locator)
+# 设置x轴刻度标签
+plt.gca().set_xticklabels([str(tick) for tick in x_tick_positions])
+
+#自定义y轴刻度位置
+y_tick_positions = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
+# 创建一个LinearLocator，以确保y轴刻度均匀分布
+y_locator = LinearLocator(numticks=len(y_tick_positions))
+plt.gca().yaxis.set_major_locator(y_locator)
+# 设置y轴刻度标签
+plt.gca().set_yticklabels([str(tick) for tick in y_tick_positions])
+
+'''
+k3=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
+k4=[0, 0.2, 0.4, 0.6, 0.8, 1]
+# 设置x轴和y轴刻度 为beta0数组对应刻度
+plt.yticks(np.arange(11), k3)
+plt.xticks(np.arange(6), k4)
+'''
+
+plt.savefig('β&δ原始热力图2.pdf', format='pdf')
+
+plt.show()
+
+'''
+plt.savefig('备用β&δ热力图.pdf', format='pdf')
+# 显示图形
+#plt.tight_layout()
+'''
